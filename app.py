@@ -10,6 +10,9 @@ ATTENDANCE_FILE = "attendance.csv"
 DEPARTMENTS_FILE = "departments.csv"
 CAPA_FILE = "capa_log.csv"
 
+# Ensure the DataFrame has required columns
+ATTENDANCE_COLUMNS = ["Date", "Emp_ID", "Name", "Department", "Shift Group", "Status", "Late_Mins", "OT_Hours"]
+
 st.set_page_config(page_title="Advanced IPQC Dashboard", layout="wide")
 st.title("🏭 Advanced IPQC Attendance & Workforce Dashboard")
 
@@ -31,7 +34,9 @@ if 'attendance_df' not in st.session_state:
         st.session_state.attendance_df = pd.read_csv(ATTENDANCE_FILE)
         st.session_state.attendance_df['Date'] = pd.to_datetime(st.session_state.attendance_df['Date'], errors='coerce')
     else:
-        st.session_state.attendance_df = pd.DataFrame()
+        # Initialize with empty structure to avoid KeyError
+        st.session_state.attendance_df = pd.DataFrame(columns=ATTENDANCE_COLUMNS)
+        st.session_state.attendance_df['Date'] = pd.to_datetime(st.session_state.attendance_df['Date'])
 
 if 'action_log' not in st.session_state:
     if os.path.exists(CAPA_FILE):
@@ -89,6 +94,8 @@ with tab2:
         day_df = st.session_state.operators_df.copy()
         day_df['Date'] = pd.to_datetime(selected_date)
         day_df['Status'] = "Present"
+        day_df['Late_Mins'] = 0
+        day_df['OT_Hours'] = 0
     edited_att = st.data_editor(day_df, hide_index=True)
     if st.button("Save Daily Attendance"):
         other = st.session_state.attendance_df[st.session_state.attendance_df['Date'].dt.date != selected_date]
