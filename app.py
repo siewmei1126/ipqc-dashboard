@@ -171,7 +171,7 @@ with tab5:
     st.write("Log issues identified from the dashboard, assign owners, and track completion.")
     
     if 'action_log' not in st.session_state:
-        st.session_state.action_log = pd.DataFrame({
+        df_log = pd.DataFrame({
             "Issue Identified": ["High 'No Show' in Night Shift C", "Line 1 Manpower Shortage"],
             "Root Cause": ["Transport delay", "Flu outbreak"],
             "Corrective Action": ["Coordinate with bus vendor", "Approve OT for Line 2 to cover"],
@@ -179,6 +179,9 @@ with tab5:
             "Target Date": ["2026-06-30", "2026-06-26"],
             "Status": ["Open", "In Progress"]
         })
+        # Fix: Convert the text strings to actual Python date objects so Streamlit's DateColumn can read them
+        df_log['Target Date'] = pd.to_datetime(df_log['Target Date']).dt.date
+        st.session_state.action_log = df_log
         
     # Editable Dataframe for CAPA
     edited_log = st.data_editor(
