@@ -34,12 +34,18 @@ def sync_attendance_with_operators(attendance_df, operators_df):
 st.set_page_config(page_title="Advanced IPQC Attendance Dashboard", layout="wide")
 st.title("🏭 Advanced IPQC Attendance & Workforce Dashboard")
 
-# --- INITIALIZATION ---
+# --- INITIALIZE PERSISTENT DATA ---
 if 'departments_df' not in st.session_state:
     st.session_state.departments_df = pd.read_csv(DEPARTMENTS_FILE) if os.path.exists(DEPARTMENTS_FILE) else pd.DataFrame({"Department": ["IPQC Line 1", "IPQC Line 2", "QA Check", "Final Insp"]})
 
 if 'operators_df' not in st.session_state:
-    st.session_state.operators_df = pd.read_csv(OPERATORS_FILE, dtype={"Emp_ID": str}) if os.path.exists(OPERATORS_FILE) else pd.DataFrame({"Emp_ID": ["508939"], "Name": ["Luqman"], "Department": ["IPQC Line 1"], "Shift Group": ["A"], "Supervisor": ["John Doe"]})
+    st.session_state.operators_df = pd.read_csv(OPERATORS_FILE, dtype={"Emp_ID": str}) if os.path.exists(OPERATORS_FILE) else pd.DataFrame({
+        "Emp_ID": ["508939", "512047", "511634", "512416", "508578"],
+        "Name": ["Luqman", "Mohd Azim", "Yogany", "Rizwan", "Siti nur Fatihah"],
+        "Department": ["IPQC Line 1", "IPQC Line 1", "IPQC Line 2", "QA Check", "Final Insp"],
+        "Shift Group": ["A", "A", "B", "C", "D"],
+        "Supervisor": ["John Doe", "John Doe", "Jane Smith", "Alan Turing", "Grace Hopper"]
+    })
 
 if 'attendance_df' not in st.session_state:
     cols = ["Date", "Emp_ID", "Name", "Department", "Shift Group", "Shift Timing", "Supervisor", "Status", "Late_Mins", "OT_Hours"]
@@ -50,15 +56,17 @@ st.session_state.attendance_df['Date'] = pd.to_datetime(st.session_state.attenda
 # --- SIDEBAR FILTERS ---
 df = st.session_state.attendance_df
 st.sidebar.header("🔍 Global Filters")
-filtered_df = df.copy()
 if not df.empty:
     selected_dates = st.sidebar.date_input("Date Range", [df['Date'].min().date() if pd.notnull(df['Date'].min()) else datetime.today(), df['Date'].max().date() if pd.notnull(df['Date'].max()) else datetime.today()])
-    if len(selected_dates) == 2:
-        mask = (df['Date'].dt.date >= selected_dates[0]) & (df['Date'].dt.date <= selected_dates[1])
-        filtered_df = df.loc[mask]
+    dept_options = st.session_state.departments_df['Department'].tolist()
+    selected_depts = st.sidebar.multiselect("Department", dept_options, default=dept_options)
+    mask = (df['Date'].dt.date >= selected_dates[0]) & (df['Date'].dt.date <= selected_dates[1]) & (df['Department'].isin(selected_depts))
+    filtered_df = df.loc[mask]
+else:
+    filtered_df = df.copy()
 
 # --- TABS ---
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["📝 Data Entry", "📊 KPI", "📈 Trends", "🧑‍🤝‍🧑 Absence", "⚠️ Alerts", "📋 CAPA"])
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["📝 Data Entry", "📊 KPI Overview", "📈 Trends", "🧑‍🤝‍🧑 Absence", "⚠️ Alerts", "📋 Action Tracking"])
 
 with tab1:
     with st.expander("🏢 Department Management"):
@@ -92,37 +100,38 @@ with tab1:
         st.session_state.attendance_df.to_csv(ATTENDANCE_FILE, index=False)
         st.success("Attendance saved!")
 
-# --- FULL KPI & ANALYTICS (Tabs 2-6) ---
 with tab2:
-    st.subheader("KPI Overview")
+    st.subheader("Attendance Overview (KPI Summary)")
     if not filtered_df.empty:
+        present = len(filtered_df[filtered_df['Status'] == 'Present'])
+        rate = (present / len(filtered_df) * 100) if len(filtered_df) > 0 else 0
         col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Unique Employees", filtered_df['Emp_ID'].nunique())
-        col2.metric("Attendance Rate", f"{(len(filtered_df[filtered_df['Status'] == 'Present'])/len(filtered_df)*100):.1f}%")
-        col3.metric("Total OT (Hours)", filtered_df['OT_Hours'].sum())
+        col1.metric("Headcount", filtered_df['Emp_ID'].nunique())
+        col2.metric("Attendance Rate", f"{rate:.1f}%")
+        col3.metric("Total OT", filtered_df['OT_Hours'].sum())
         col4.metric("No Shows", len(filtered_df[filtered_df['Status'] == 'ABS']))
 
 with tab3:
-    st.subheader("Trends")
+    st.subheader("Trends & Shift Analysis")
     if not filtered_df.empty:
         fig = px.line(filtered_df.groupby(['Date', 'Status']).size().reset_index(name='Count'), x='Date', y='Count', color='Status')
         st.plotly_chart(fig, use_container_width=True)
 
 with tab4:
-    st.subheader("Absence Analysis")
+    st.subheader("Absence Breakdown")
     if not filtered_df.empty:
         st.bar_chart(filtered_df[filtered_df['Status'] != 'Present']['Status'].value_counts())
 
 with tab5:
-    st.subheader("Alerts")
+    st.subheader("⚠️ Automated Exception Alerts")
     if not filtered_df.empty and (filtered_df['Status'] == 'ABS').any():
-        st.warning("⚠️ ABSENCE DETECTED: Action Required")
+        st.warning("⚠️ Absence/No Show detected.")
 
 with tab6:
     st.subheader("📋 Action Tracking (CAPA)")
     if 'action_log' not in st.session_state:
         st.session_state.action_log = pd.read_csv(CAPA_FILE) if os.path.exists(CAPA_FILE) else pd.DataFrame(columns=["Issue", "Owner", "Status"])
     st.session_state.action_log = st.data_editor(st.session_state.action_log, num_rows="dynamic")
-    if st.button("💾 Save CAPA"):
+    if st.button("💾 Save Action Log"):
         st.session_state.action_log.to_csv(CAPA_FILE, index=False)
         st.success("CAPA updated!")
