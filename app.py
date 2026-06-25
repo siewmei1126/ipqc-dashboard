@@ -2,65 +2,73 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-import random
 from datetime import datetime, timedelta
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="Advanced IPQC Attendance Dashboard", layout="wide")
 st.title("🏭 Advanced IPQC Attendance & Workforce Dashboard")
 
-# --- 1. MOCK DATA GENERATION (To populate the new features) ---
-@st.cache_data
-def generate_mock_data():
-    dates = [datetime.today().date() - timedelta(days=x) for x in range(30)]
-    departments = ["IPQC Line 1", "IPQC Line 2", "QA Check", "Final Insp"]
-    shifts = ["A (Morning)", "B (Morning)", "C (Night)", "D (Night)"]
-    supervisors = ["John Doe", "Jane Smith", "Alan Turing", "Grace Hopper"]
-    statuses = ["Present", "Present", "Present", "Present", "MC", "AL", "EL", "Unplanned", "No Show"]
-    
-    data = []
-    for _ in range(500):  # 500 random attendance records
-        status = random.choice(statuses)
-        is_present = status == "Present"
-        data.append({
-            "Date": random.choice(dates),
-            "Emp_ID": f"EMP{random.randint(1000, 1050)}",
-            "Name": f"Operator {random.randint(1, 50)}",
-            "Department": random.choice(departments),
-            "Shift": random.choice(shifts),
-            "Supervisor": random.choice(supervisors),
-            "Status": status,
-            "Late_Mins": random.randint(10, 120) if is_present and random.random() > 0.8 else 0,
-            "OT_Hours": random.randint(1, 4) if is_present and random.random() > 0.7 else 0,
-            "Target_Attendance": 95.0
-        })
-    df = pd.DataFrame(data).sort_values(by="Date", ascending=False)
-    # Convert Date to datetime format for plotting
-    df['Date'] = pd.to_datetime(df['Date'])
-    return df
+# --- 1. INITIALIZE PERSISTENT DATA STATE ---
+# This replaces the random mock data with actual editable state
+if 'operators_df' not in st.session_state:
+    st.session_state.operators_df = pd.DataFrame({
+        "Emp_ID": ["508939", "512047", "511634", "512416", "508578"],
+        "Name": ["Luqman", "Mohd Azim", "Yogany", "Rizwan", "Siti nur Fatihah"],
+        "Department": ["IPQC Line 1", "IPQC Line 1", "IPQC Line 2", "QA Check", "Final Insp"],
+        "Shift Group": ["A", "A", "B", "C", "D"],
+        "Supervisor": ["John Doe", "John Doe", "Jane Smith", "Alan Turing", "Grace Hopper"]
+    })
 
-df = generate_mock_data()
+if 'attendance_df' not in st.session_state:
+    # Generate 7 days of historical baseline data so charts aren't empty on first load
+    base_data = []
+    for i in range(7):
+        date = datetime.today().date() - timedelta(days=i)
+        for _, op in st.session_state.operators_df.iterrows():
+            base_data.append({
+                "Date": pd.to_datetime(date),
+                "Emp_ID": op["Emp_ID"],
+                "Name": op["Name"],
+                "Department": op["Department"],
+                "Shift Group": op["Shift Group"],
+                "Shift Timing": "Day" if op["Shift Group"] in ["A", "C"] else "Night",
+                "Supervisor": op["Supervisor"],
+                "Status": "Present",
+                "Late_Mins": 0,
+                "OT_Hours": 0
+            })
+    st.session_state.attendance_df = pd.DataFrame(base_data)
+
+# Ensure Date column is always datetime format
+st.session_state.attendance_df['Date'] = pd.to_datetime(st.session_state.attendance_df['Date'])
 
 # --- 2. SIDEBAR FILTERS ---
+df = st.session_state.attendance_df
 st.sidebar.header("🔍 Global Filters")
-selected_dates = st.sidebar.date_input("Date Range", [df['Date'].min(), df['Date'].max()])
-selected_depts = st.sidebar.multiselect("Department", df['Department'].unique(), default=df['Department'].unique())
-selected_shifts = st.sidebar.multiselect("Shift", df['Shift'].unique(), default=df['Shift'].unique())
-selected_sups = st.sidebar.multiselect("Supervisor", df['Supervisor'].unique(), default=df['Supervisor'].unique())
 
-# Apply Filters
-if len(selected_dates) == 2:
-    start_date, end_date = selected_dates
-    mask = (df['Date'].dt.date >= start_date) & (df['Date'].dt.date <= end_date) & \
-           (df['Department'].isin(selected_depts)) & \
-           (df['Shift'].isin(selected_shifts)) & \
-           (df['Supervisor'].isin(selected_sups))
-    filtered_df = df.loc[mask]
+# Only show filters if we have data
+if not df.empty:
+    selected_dates = st.sidebar.date_input("Date Range", [df['Date'].min(), df['Date'].max()])
+    selected_depts = st.sidebar.multiselect("Department", df['Department'].unique(), default=df['Department'].unique())
+    selected_shifts = st.sidebar.multiselect("Shift Group", df['Shift Group'].unique(), default=df['Shift Group'].unique())
+    selected_sups = st.sidebar.multiselect("Supervisor", df['Supervisor'].unique(), default=df['Supervisor'].unique())
+
+    # Apply Filters
+    if len(selected_dates) == 2:
+        start_date, end_date = selected_dates
+        mask = (df['Date'].dt.date >= start_date) & (df['Date'].dt.date <= end_date) & \
+               (df['Department'].isin(selected_depts)) & \
+               (df['Shift Group'].isin(selected_shifts)) & \
+               (df['Supervisor'].isin(selected_sups))
+        filtered_df = df.loc[mask]
+    else:
+        filtered_df = df.copy()
 else:
     filtered_df = df.copy()
 
 # --- 3. DASHBOARD TABS ---
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    "📝 Data Entry & Operators",
     "📊 KPI Overview", 
     "📈 Trends & Shift Analysis", 
     "🧑‍🤝‍🧑 Absence & Performance", 
@@ -68,122 +76,205 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📋 Action Tracking"
 ])
 
-# --- TAB 1: KPI OVERVIEW ---
+# --- TAB 1: DATA ENTRY & OPERATOR MANAGEMENT ---
 with tab1:
-    st.subheader("1. Attendance Overview (KPI Summary)")
+    st.header("1. Operator Management")
+    st.write("Add or remove operators and assign their Shift Group (A/B/C/D).")
+    st.session_state.operators_df = st.data_editor(
+        st.session_state.operators_df, 
+        num_rows="dynamic", 
+        use_container_width=True,
+        column_config={
+            "Shift Group": st.column_config.SelectboxColumn("Shift Group", options=["A", "B", "C", "D"])
+        }
+    )
     
-    # Calculate KPIs
-    total_headcount = len(filtered_df)
-    present_count = len(filtered_df[filtered_df['Status'] == 'Present'])
-    absent_count = total_headcount - present_count
+    st.markdown("---")
     
-    att_rate = (present_count / total_headcount * 100) if total_headcount > 0 else 0
-    abs_rate = 100 - att_rate
-    late_count = len(filtered_df[filtered_df['Late_Mins'] > 0])
-    late_rate = (late_count / present_count * 100) if present_count > 0 else 0
-    total_ot = filtered_df['OT_Hours'].sum()
-    no_show_count = len(filtered_df[filtered_df['Status'] == 'No Show'])
-    leave_util = len(filtered_df[filtered_df['Status'].isin(['AL', 'MC', 'EL'])]) / total_headcount * 100 if total_headcount > 0 else 0
+    st.header("2. Daily Attendance Entry")
+    entry_date = st.date_input("Select Date to Input/Edit Attendance", datetime.today().date())
+    
+    # Get existing records for this date
+    current_att = st.session_state.attendance_df[st.session_state.attendance_df['Date'].dt.date == entry_date].copy()
+    
+    # If no records exist for this date, pre-populate using the current operators list
+    if current_att.empty and not st.session_state.operators_df.empty:
+        current_att = st.session_state.operators_df.copy()
+        current_att['Date'] = pd.to_datetime(entry_date)
+        current_att['Shift Timing'] = "Day" # Default, user can change to Night
+        current_att['Status'] = "Present"
+        current_att['Late_Mins'] = 0
+        current_att['OT_Hours'] = 0
+        # Reorder columns to match main dataframe
+        current_att = current_att[["Date", "Emp_ID", "Name", "Department", "Shift Group", "Shift Timing", "Supervisor", "Status", "Late_Mins", "OT_Hours"]]
 
-    # Display Metrics in Columns
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Total Headcount (Scheduled)", f"{total_headcount}")
-    col2.metric("Present Employees", f"{present_count}")
-    col3.metric("Attendance Rate", f"{att_rate:.1f}%", delta=f"{att_rate - 95:.1f}% vs Target", delta_color="normal")
-    col4.metric("Absenteeism Rate", f"{abs_rate:.1f}%")
+    st.write(f"Keying in attendance for: **{entry_date}**")
+    
+    edited_att = st.data_editor(
+        current_att,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Date": st.column_config.Column(disabled=True),
+            "Emp_ID": st.column_config.Column(disabled=True),
+            "Name": st.column_config.Column(disabled=True),
+            "Shift Timing": st.column_config.SelectboxColumn(
+                "Shift Timing", help="Day or Night Shift", options=["Day", "Night", "Off"]
+            ),
+            "Status": st.column_config.SelectboxColumn(
+                "Attendance Status",
+                options=["Present", "PH", "AL", "UPL", "EL", "OTM", "OTN", "MC", "SD", "HL", "ABS"],
+                required=True
+            ),
+            "Late_Mins": st.column_config.NumberColumn("Late (Mins)", min_value=0),
+            "OT_Hours": st.column_config.NumberColumn("OT (Hours)", min_value=0)
+        }
+    )
+    
+    if st.button("💾 Save Daily Attendance", type="primary"):
+        # Remove old records for this date and append the new edited records
+        other_dates_df = st.session_state.attendance_df[st.session_state.attendance_df['Date'].dt.date != entry_date]
+        st.session_state.attendance_df = pd.concat([other_dates_df, edited_att], ignore_index=True)
+        st.success(f"Attendance for {entry_date} saved successfully! KPIs have been updated.")
 
-    col5, col6, col7, col8 = st.columns(4)
-    col5.metric("Late Arrival Rate", f"{late_rate:.1f}%")
-    col6.metric("Total Overtime (Hours)", f"{total_ot} hrs")
-    col7.metric("Leave Utilization", f"{leave_util:.1f}%")
-    col8.metric("No Show Cases", f"{no_show_count}", delta="Requires Action!" if no_show_count > 0 else "Good", delta_color="inverse")
-
-# --- TAB 2: TRENDS & SHIFT ANALYSIS ---
+# --- TAB 2: KPI OVERVIEW ---
 with tab2:
-    col1, col2 = st.columns(2)
+    st.subheader("Attendance Overview (KPI Summary)")
     
-    with col1:
-        st.subheader("Daily Attendance Trend")
-        trend_df = filtered_df.groupby(['Date', 'Status']).size().reset_index(name='Count')
-        fig_trend = px.line(trend_df, x='Date', y='Count', color='Status', title="Daily Status Breakdown")
-        st.plotly_chart(fig_trend, use_container_width=True)
+    if not filtered_df.empty:
+        # Define Status Groups based on user remark request
+        working_statuses = ["Present", "OTM", "OTN"]
+        leave_statuses = ["AL", "UPL", "EL", "MC", "HL"]
+        exempt_statuses = ["PH", "SD"]
         
-    with col2:
-        st.subheader("Attendance by Department")
-        dept_df = filtered_df[filtered_df['Status'] == 'Present'].groupby('Department').size().reset_index(name='Present Count')
-        fig_dept = px.bar(dept_df, x='Department', y='Present Count', title="Present Headcount by Dept", color='Department')
-        st.plotly_chart(fig_dept, use_container_width=True)
-
-    st.subheader("Attendance by Shift & Manpower Shortage")
-    shift_df = filtered_df.groupby(['Shift', 'Status']).size().reset_index(name='Count')
-    fig_shift = px.bar(shift_df, x='Shift', y='Count', color='Status', barmode='group', title="Shift Breakdown")
-    st.plotly_chart(fig_shift, use_container_width=True)
-
-# --- TAB 3: ABSENCE & PERFORMANCE ANALYSIS ---
-with tab3:
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.subheader("Absence Breakdown by Reason")
-        absent_df = filtered_df[filtered_df['Status'] != 'Present']
-        reason_counts = absent_df['Status'].value_counts().reset_index()
-        reason_counts.columns = ['Reason', 'Count']
-        fig_pie = px.pie(reason_counts, names='Reason', values='Count', hole=0.4, title="Leave/Absence Distribution")
-        st.plotly_chart(fig_pie, use_container_width=True)
+        total_headcount = len(filtered_df)
+        present_count = len(filtered_df[filtered_df['Status'].isin(working_statuses)])
+        absent_count = len(filtered_df[filtered_df['Status'].isin(leave_statuses + ["ABS"])])
         
-    with col2:
-        st.subheader("Employee Attendance Performance (Bottom 5)")
-        # Calculate individual absence counts
-        emp_absences = absent_df.groupby(['Name', 'Emp_ID']).size().reset_index(name='Absence Days')
-        emp_absences = emp_absences.sort_values(by='Absence Days', ascending=False).head(5)
-        st.dataframe(emp_absences, use_container_width=True)
+        att_rate = (present_count / (total_headcount - len(filtered_df[filtered_df['Status'].isin(exempt_statuses)])) * 100) if (total_headcount - len(filtered_df[filtered_df['Status'].isin(exempt_statuses)])) > 0 else 0
+        abs_rate = 100 - att_rate if att_rate > 0 else 0
         
-        st.subheader("Top Late Arrivals")
-        late_emps = filtered_df[filtered_df['Late_Mins'] > 0].groupby(['Name']).agg({'Late_Mins': 'sum', 'Date':'count'})
-        late_emps.columns = ['Total Late Mins', 'Frequency']
-        late_emps = late_emps.sort_values(by='Total Late Mins', ascending=False).head(5)
-        st.dataframe(late_emps, use_container_width=True)
+        late_count = len(filtered_df[filtered_df['Late_Mins'] > 0])
+        late_rate = (late_count / present_count * 100) if present_count > 0 else 0
+        total_ot = filtered_df['OT_Hours'].sum()
+        no_show_count = len(filtered_df[filtered_df['Status'] == 'ABS'])
+        leave_util = len(filtered_df[filtered_df['Status'].isin(leave_statuses)]) / total_headcount * 100 if total_headcount > 0 else 0
 
-# --- TAB 4: ALERTS & EXCEPTIONS ---
-with tab4:
-    st.subheader("⚠️ Automated Exception Alerts")
-    
-    # Alert 1: Low Attendance
-    if att_rate < 90:
-        st.error(f"🔴 CRITICAL: Overall attendance rate is at {att_rate:.1f}%, below the 90% threshold target.")
+        # Display Metrics in Columns
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("Total Headcount (Scheduled)", f"{total_headcount}")
+        col2.metric("Present / Working", f"{present_count}")
+        col3.metric("Attendance Rate", f"{att_rate:.1f}%", delta=f"{att_rate - 95:.1f}% vs Target", delta_color="normal")
+        col4.metric("Absenteeism Rate", f"{abs_rate:.1f}%")
+
+        col5, col6, col7, col8 = st.columns(4)
+        col5.metric("Late Arrival Rate", f"{late_rate:.1f}%")
+        col6.metric("Total Overtime (Hours)", f"{total_ot} hrs")
+        col7.metric("Leave Utilization", f"{leave_util:.1f}%")
+        col8.metric("No Show Cases (ABS)", f"{no_show_count}", delta="Requires Action!" if no_show_count > 0 else "Good", delta_color="inverse")
     else:
-        st.success(f"🟢 Overall attendance rate is healthy ({att_rate:.1f}%).")
-        
-    # Alert 2: No Shows
-    if no_show_count > 0:
-        st.warning(f"🟠 WARNING: Detected {no_show_count} 'No Show' case(s). Immediate supervisor follow-up required.")
-        no_show_df = filtered_df[filtered_df['Status'] == 'No Show'][['Date', 'Name', 'Department', 'Supervisor']]
-        st.dataframe(no_show_df, hide_index=True)
-        
-    # Alert 3: High Latenss
-    high_late_count = len(filtered_df[filtered_df['Late_Mins'] > 30])
-    if high_late_count > 0:
-        st.info(f"🟡 NOTICE: {high_late_count} instances of employees arriving more than 30 minutes late.")
+        st.info("No attendance data found for the selected filters. Please enter data in Tab 1.")
 
-# --- TAB 5: ACTION TRACKING (CAPA) ---
+# --- TAB 3: TRENDS & SHIFT ANALYSIS ---
+with tab3:
+    if not filtered_df.empty:
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.subheader("Daily Attendance Trend")
+            trend_df = filtered_df.groupby(['Date', 'Status']).size().reset_index(name='Count')
+            fig_trend = px.line(trend_df, x='Date', y='Count', color='Status', title="Daily Status Breakdown")
+            st.plotly_chart(fig_trend, use_container_width=True)
+            
+        with col2:
+            st.subheader("Attendance by Department")
+            dept_df = filtered_df[filtered_df['Status'].isin(["Present", "OTM", "OTN"])].groupby('Department').size().reset_index(name='Present Count')
+            if not dept_df.empty:
+                fig_dept = px.bar(dept_df, x='Department', y='Present Count', title="Present Headcount by Dept", color='Department')
+                st.plotly_chart(fig_dept, use_container_width=True)
+            else:
+                st.write("No present employees for this selection.")
+
+        st.subheader("Attendance by Shift Group & Manpower Shortage")
+        shift_df = filtered_df.groupby(['Shift Group', 'Status']).size().reset_index(name='Count')
+        fig_shift = px.bar(shift_df, x='Shift Group', y='Count', color='Status', barmode='group', title="Shift Breakdown")
+        st.plotly_chart(fig_shift, use_container_width=True)
+
+# --- TAB 4: ABSENCE & PERFORMANCE ANALYSIS ---
+with tab4:
+    if not filtered_df.empty:
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.subheader("Absence Breakdown by Reason")
+            absent_df = filtered_df[filtered_df['Status'].isin(["AL", "UPL", "EL", "MC", "HL", "ABS"])]
+            reason_counts = absent_df['Status'].value_counts().reset_index()
+            reason_counts.columns = ['Reason', 'Count']
+            
+            if not reason_counts.empty:
+                fig_pie = px.pie(reason_counts, names='Reason', values='Count', hole=0.4, title="Leave/Absence Distribution")
+                st.plotly_chart(fig_pie, use_container_width=True)
+            else:
+                st.success("No absences recorded for this period!")
+            
+        with col2:
+            st.subheader("Employee Attendance Performance (Bottom 5)")
+            if not absent_df.empty:
+                emp_absences = absent_df.groupby(['Name', 'Emp_ID']).size().reset_index(name='Absence Days')
+                emp_absences = emp_absences.sort_values(by='Absence Days', ascending=False).head(5)
+                st.dataframe(emp_absences, hide_index=True, use_container_width=True)
+            else:
+                st.write("No absences to display.")
+            
+            st.subheader("Top Late Arrivals")
+            late_emps = filtered_df[filtered_df['Late_Mins'] > 0].groupby(['Name']).agg({'Late_Mins': 'sum', 'Date':'count'})
+            if not late_emps.empty:
+                late_emps.columns = ['Total Late Mins', 'Frequency']
+                late_emps = late_emps.sort_values(by='Total Late Mins', ascending=False).head(5)
+                st.dataframe(late_emps, use_container_width=True)
+            else:
+                st.write("No late arrivals recorded.")
+
+# --- TAB 5: ALERTS & EXCEPTIONS ---
 with tab5:
+    st.subheader("⚠️ Automated Exception Alerts")
+    if not filtered_df.empty:
+        # Alert 1: Low Attendance
+        if att_rate < 90:
+            st.error(f"🔴 CRITICAL: Overall attendance rate is at {att_rate:.1f}%, below the 90% threshold target.")
+        else:
+            st.success(f"🟢 Overall attendance rate is healthy ({att_rate:.1f}%).")
+            
+        # Alert 2: No Shows (ABS)
+        if no_show_count > 0:
+            st.warning(f"🟠 WARNING: Detected {no_show_count} 'ABS' (Absence/No Show) case(s). Immediate supervisor follow-up required.")
+            no_show_df = filtered_df[filtered_df['Status'] == 'ABS'][['Date', 'Name', 'Department', 'Supervisor']]
+            st.dataframe(no_show_df, hide_index=True)
+            
+        # Alert 3: High Latenss
+        high_late_count = len(filtered_df[filtered_df['Late_Mins'] > 30])
+        if high_late_count > 0:
+            st.info(f"🟡 NOTICE: {high_late_count} instances of employees arriving more than 30 minutes late.")
+    else:
+         st.write("No data available to generate alerts.")
+
+# --- TAB 6: ACTION TRACKING (CAPA) ---
+with tab6:
     st.subheader("📋 Corrective & Preventive Action (CAPA) Tracking")
     st.write("Log issues identified from the dashboard, assign owners, and track completion.")
     
     if 'action_log' not in st.session_state:
         df_log = pd.DataFrame({
-            "Issue Identified": ["High 'No Show' in Night Shift C", "Line 1 Manpower Shortage"],
+            "Issue Identified": ["High 'ABS' in Night Shift C", "Line 1 Manpower Shortage"],
             "Root Cause": ["Transport delay", "Flu outbreak"],
             "Corrective Action": ["Coordinate with bus vendor", "Approve OT for Line 2 to cover"],
             "Owner": ["Jane Smith", "John Doe"],
             "Target Date": ["2026-06-30", "2026-06-26"],
             "Status": ["Open", "In Progress"]
         })
-        # Fix: Convert the text strings to actual Python date objects so Streamlit's DateColumn can read them
         df_log['Target Date'] = pd.to_datetime(df_log['Target Date']).dt.date
         st.session_state.action_log = df_log
         
-    # Editable Dataframe for CAPA
     edited_log = st.data_editor(
         st.session_state.action_log, 
         num_rows="dynamic", 
