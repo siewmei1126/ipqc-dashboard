@@ -45,16 +45,18 @@ if 'attendance_df' not in st.session_state:
     cols = ["Date", "Emp_ID", "Name", "Department", "Shift Group", "Shift Timing", "Supervisor", "Status", "Late_Mins", "OT_Hours"]
     if os.path.exists(ATTENDANCE_FILE):
         st.session_state.attendance_df = pd.read_csv(ATTENDANCE_FILE)
-        st.session_state.attendance_df['Date'] = pd.to_datetime(st.session_state.attendance_df['Date'])
     else:
         st.session_state.attendance_df = pd.DataFrame(columns=cols)
+
+# FORCE DATETIME FORMAT
+st.session_state.attendance_df['Date'] = pd.to_datetime(st.session_state.attendance_df['Date'], errors='coerce')
 
 # --- SIDEBAR FILTERS ---
 df = st.session_state.attendance_df
 st.sidebar.header("🔍 Global Filters")
 filtered_df = df.copy()
 if not df.empty:
-    selected_dates = st.sidebar.date_input("Date Range", [df['Date'].min(), df['Date'].max()])
+    selected_dates = st.sidebar.date_input("Date Range", [df['Date'].min().date() if pd.notnull(df['Date'].min()) else datetime.today(), df['Date'].max().date() if pd.notnull(df['Date'].max()) else datetime.today()])
     if len(selected_dates) == 2:
         mask = (df['Date'].dt.date >= selected_dates[0]) & (df['Date'].dt.date <= selected_dates[1])
         filtered_df = df.loc[mask]
