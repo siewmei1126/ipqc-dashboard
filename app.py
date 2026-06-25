@@ -367,4 +367,4 @@ with tab6:
     if st.button("💾 Save Action Log"):
         st.session_state.action_log = edited_log
         st.session_state.action_log.to_csv(CAPA_FILE, index=False)
-        st.success("Action tracking log saved perm
+        st.success("Action tracking log saved permanently!")
