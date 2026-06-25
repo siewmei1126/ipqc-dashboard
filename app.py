@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # --- FILE PATHS ---
 OPERATORS_FILE = "operators.csv"
@@ -31,10 +31,10 @@ def sync_attendance_with_operators(attendance_df, operators_df):
     return pd.concat(updated_records, ignore_index=True)
 
 # --- PAGE CONFIG ---
-st.set_page_config(page_title="Advanced IPQC Dashboard", layout="wide")
+st.set_page_config(page_title="Advanced IPQC Attendance Dashboard", layout="wide")
 st.title("🏭 Advanced IPQC Attendance & Workforce Dashboard")
 
-# --- INITIALIZE DATA ---
+# --- INITIALIZATION ---
 if 'departments_df' not in st.session_state:
     st.session_state.departments_df = pd.read_csv(DEPARTMENTS_FILE) if os.path.exists(DEPARTMENTS_FILE) else pd.DataFrame({"Department": ["IPQC Line 1", "IPQC Line 2", "QA Check", "Final Insp"]})
 
@@ -43,12 +43,8 @@ if 'operators_df' not in st.session_state:
 
 if 'attendance_df' not in st.session_state:
     cols = ["Date", "Emp_ID", "Name", "Department", "Shift Group", "Shift Timing", "Supervisor", "Status", "Late_Mins", "OT_Hours"]
-    if os.path.exists(ATTENDANCE_FILE):
-        st.session_state.attendance_df = pd.read_csv(ATTENDANCE_FILE)
-    else:
-        st.session_state.attendance_df = pd.DataFrame(columns=cols)
+    st.session_state.attendance_df = pd.read_csv(ATTENDANCE_FILE) if os.path.exists(ATTENDANCE_FILE) else pd.DataFrame(columns=cols)
 
-# FORCE DATETIME FORMAT
 st.session_state.attendance_df['Date'] = pd.to_datetime(st.session_state.attendance_df['Date'], errors='coerce')
 
 # --- SIDEBAR FILTERS ---
@@ -96,32 +92,36 @@ with tab1:
         st.session_state.attendance_df.to_csv(ATTENDANCE_FILE, index=False)
         st.success("Attendance saved!")
 
-# --- TABS 2-6 ---
+# --- FULL KPI & ANALYTICS (Tabs 2-6) ---
 with tab2:
     st.subheader("KPI Overview")
     if not filtered_df.empty:
-        col1, col2 = st.columns(2)
-        col1.metric("Total Unique Employees", filtered_df['Emp_ID'].nunique())
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("Unique Employees", filtered_df['Emp_ID'].nunique())
         col2.metric("Attendance Rate", f"{(len(filtered_df[filtered_df['Status'] == 'Present'])/len(filtered_df)*100):.1f}%")
+        col3.metric("Total OT (Hours)", filtered_df['OT_Hours'].sum())
+        col4.metric("No Shows", len(filtered_df[filtered_df['Status'] == 'ABS']))
 
 with tab3:
+    st.subheader("Trends")
     if not filtered_df.empty:
-        st.plotly_chart(px.line(filtered_df.groupby(['Date', 'Status']).size().reset_index(name='Count'), x='Date', y='Count', color='Status'), use_container_width=True)
+        fig = px.line(filtered_df.groupby(['Date', 'Status']).size().reset_index(name='Count'), x='Date', y='Count', color='Status')
+        st.plotly_chart(fig, use_container_width=True)
 
 with tab4:
+    st.subheader("Absence Analysis")
     if not filtered_df.empty:
         st.bar_chart(filtered_df[filtered_df['Status'] != 'Present']['Status'].value_counts())
 
 with tab5:
+    st.subheader("Alerts")
     if not filtered_df.empty and (filtered_df['Status'] == 'ABS').any():
-        st.warning("⚠️ ABSENCE DETECTED")
+        st.warning("⚠️ ABSENCE DETECTED: Action Required")
 
 with tab6:
-    st.subheader("📋 CAPA Tracking")
-    # Corrected usage of os.path.exists here:
+    st.subheader("📋 Action Tracking (CAPA)")
     if 'action_log' not in st.session_state:
         st.session_state.action_log = pd.read_csv(CAPA_FILE) if os.path.exists(CAPA_FILE) else pd.DataFrame(columns=["Issue", "Owner", "Status"])
-    
     st.session_state.action_log = st.data_editor(st.session_state.action_log, num_rows="dynamic")
     if st.button("💾 Save CAPA"):
         st.session_state.action_log.to_csv(CAPA_FILE, index=False)
