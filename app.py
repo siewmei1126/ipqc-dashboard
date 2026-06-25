@@ -182,13 +182,17 @@ if not df.empty:
 
         start_date, end_date = selected_dates
 
-        mask = (df['Date'].dt.date >= start_date) & (df['Date'].dt.date <= end_date) & \
+        mask = (
 
-               (df['Department'].isin(selected_depts)) & \
+            (df['Date'].dt.date >= start_date) & (df['Date'].dt.date <= end_date) &
 
-               (df['Shift Group'].isin(selected_shifts)) & \
+            (df['Department'].isin(selected_depts)) &
 
-               (df['Supervisor'].isin(selected_sups))
+            (df['Shift Group'].isin(selected_shifts)) &
+
+            (df['Supervisor'].isin(selected_sups))
+
+        )
 
         filtered_df = df.loc[mask]
 
