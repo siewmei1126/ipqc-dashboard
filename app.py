@@ -3,41 +3,69 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
+import os
+
+# --- FILE PATHS FOR SAVING DATA ---
+OPERATORS_FILE = "operators.csv"
+ATTENDANCE_FILE = "attendance.csv"
+CAPA_FILE = "capa_log.csv"
+DEPARTMENTS_FILE = "departments.csv" # New file for custom departments
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="Advanced IPQC Attendance Dashboard", layout="wide")
 st.title("🏭 Advanced IPQC Attendance & Workforce Dashboard")
 
 # --- 1. INITIALIZE PERSISTENT DATA STATE ---
-# This replaces the random mock data with actual editable state
-if 'operators_df' not in st.session_state:
-    st.session_state.operators_df = pd.DataFrame({
-        "Emp_ID": ["508939", "512047", "511634", "512416", "508578"],
-        "Name": ["Luqman", "Mohd Azim", "Yogany", "Rizwan", "Siti nur Fatihah"],
-        "Department": ["IPQC Line 1", "IPQC Line 1", "IPQC Line 2", "QA Check", "Final Insp"],
-        "Shift Group": ["A", "A", "B", "C", "D"],
-        "Supervisor": ["John Doe", "John Doe", "Jane Smith", "Alan Turing", "Grace Hopper"]
-    })
 
+# Initialize Departments
+if 'departments_df' not in st.session_state:
+    if os.path.exists(DEPARTMENTS_FILE):
+        st.session_state.departments_df = pd.read_csv(DEPARTMENTS_FILE)
+    else:
+        st.session_state.departments_df = pd.DataFrame({
+            "Department": ["IPQC Line 1", "IPQC Line 2", "QA Check", "Final Insp"]
+        })
+
+# Initialize Operators
+if 'operators_df' not in st.session_state:
+    if os.path.exists(OPERATORS_FILE):
+        # Load from saved file if it exists
+        st.session_state.operators_df = pd.read_csv(OPERATORS_FILE, dtype={"Emp_ID": str})
+    else:
+        # Default starting data
+        st.session_state.operators_df = pd.DataFrame({
+            "Emp_ID": ["508939", "512047", "511634", "512416", "508578"],
+            "Name": ["Luqman", "Mohd Azim", "Yogany", "Rizwan", "Siti nur Fatihah"],
+            "Department": ["IPQC Line 1", "IPQC Line 1", "IPQC Line 2", "QA Check", "Final Insp"],
+            "Shift Group": ["A", "A", "B", "C", "D"],
+            "Supervisor": ["John Doe", "John Doe", "Jane Smith", "Alan Turing", "Grace Hopper"]
+        })
+
+# Initialize Attendance
 if 'attendance_df' not in st.session_state:
-    # Generate 7 days of historical baseline data so charts aren't empty on first load
-    base_data = []
-    for i in range(7):
-        date = datetime.today().date() - timedelta(days=i)
-        for _, op in st.session_state.operators_df.iterrows():
-            base_data.append({
-                "Date": pd.to_datetime(date),
-                "Emp_ID": op["Emp_ID"],
-                "Name": op["Name"],
-                "Department": op["Department"],
-                "Shift Group": op["Shift Group"],
-                "Shift Timing": "Day" if op["Shift Group"] in ["A", "C"] else "Night",
-                "Supervisor": op["Supervisor"],
-                "Status": "Present",
-                "Late_Mins": 0,
-                "OT_Hours": 0
-            })
-    st.session_state.attendance_df = pd.DataFrame(base_data)
+    if os.path.exists(ATTENDANCE_FILE):
+        # Load saved attendance data
+        st.session_state.attendance_df = pd.read_csv(ATTENDANCE_FILE)
+        st.session_state.attendance_df['Date'] = pd.to_datetime(st.session_state.attendance_df['Date'])
+    else:
+        # Generate 7 days of historical baseline data so charts aren't empty on first load
+        base_data = []
+        for i in range(7):
+            date = datetime.today().date() - timedelta(days=i)
+            for _, op in st.session_state.operators_df.iterrows():
+                base_data.append({
+                    "Date": pd.to_datetime(date),
+                    "Emp_ID": op["Emp_ID"],
+                    "Name": op["Name"],
+                    "Department": op["Department"],
+                    "Shift Group": op["Shift Group"],
+                    "Shift Timing": "Day" if op["Shift Group"] in ["A", "C"] else "Night",
+                    "Supervisor": op["Supervisor"],
+                    "Status": "Present",
+                    "Late_Mins": 0,
+                    "OT_Hours": 0
+                })
+        st.session_state.attendance_df = pd.DataFrame(base_data)
 
 # Ensure Date column is always datetime format
 st.session_state.attendance_df['Date'] = pd.to_datetime(st.session_state.attendance_df['Date'])
@@ -49,7 +77,13 @@ st.sidebar.header("🔍 Global Filters")
 # Only show filters if we have data
 if not df.empty:
     selected_dates = st.sidebar.date_input("Date Range", [df['Date'].min(), df['Date'].max()])
-    selected_depts = st.sidebar.multiselect("Department", df['Department'].unique(), default=df['Department'].unique())
+    
+    # Use the active departments from our state for the filter options
+    dept_options = st.session_state.departments_df['Department'].tolist()
+    # Also include any old departments that might be in historical data but were removed
+    all_depts = list(set(df['Department'].unique().tolist() + dept_options))
+    
+    selected_depts = st.sidebar.multiselect("Department", all_depts, default=all_depts)
     selected_shifts = st.sidebar.multiselect("Shift Group", df['Shift Group'].unique(), default=df['Shift Group'].unique())
     selected_sups = st.sidebar.multiselect("Supervisor", df['Supervisor'].unique(), default=df['Supervisor'].unique())
 
@@ -78,16 +112,45 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
 
 # --- TAB 1: DATA ENTRY & OPERATOR MANAGEMENT ---
 with tab1:
+    
+    with st.expander("🏢 Department Management", expanded=False):
+        st.write("Add, rename, or remove departments. This updates the dropdown in the Operator list.")
+        edited_depts = st.data_editor(
+            st.session_state.departments_df,
+            num_rows="dynamic",
+            key="dept_editor",
+            use_container_width=True
+        )
+        if st.button("💾 Save Departments"):
+            st.session_state.departments_df = edited_depts
+            st.session_state.departments_df.to_csv(DEPARTMENTS_FILE, index=False)
+            st.success("Department list saved!")
+
     st.header("1. Operator Management")
-    st.write("Add or remove operators and assign their Shift Group (A/B/C/D).")
-    st.session_state.operators_df = st.data_editor(
+    st.write("Add or remove operators and assign their Shift Group and Department.")
+    
+    # Get the latest list of departments for the dropdown
+    current_dept_list = st.session_state.departments_df['Department'].tolist()
+    
+    # Using a key here prevents the table from blanking out when typing the first time
+    edited_ops = st.data_editor(
         st.session_state.operators_df, 
         num_rows="dynamic", 
         use_container_width=True,
+        key="operator_editor",
         column_config={
-            "Shift Group": st.column_config.SelectboxColumn("Shift Group", options=["A", "B", "C", "D"])
+            "Shift Group": st.column_config.SelectboxColumn("Shift Group", options=["A", "B", "C", "D"]),
+            "Department": st.column_config.SelectboxColumn("Department", options=current_dept_list)
         }
     )
+    
+    # Instantly update session memory to prevent wipe on refresh
+    st.session_state.operators_df = edited_ops
+    
+    # Save button to commit operator changes to a permanent file
+    if st.button("💾 Save Operator List"):
+        st.session_state.operators_df.to_csv(OPERATORS_FILE, index=False)
+        st.success("Operator list saved! Your changes will now remain even if you refresh the page.")
     
     st.markdown("---")
     
@@ -114,6 +177,7 @@ with tab1:
         current_att,
         use_container_width=True,
         hide_index=True,
+        key="attendance_editor",
         column_config={
             "Date": st.column_config.Column(disabled=True),
             "Emp_ID": st.column_config.Column(disabled=True),
@@ -135,6 +199,8 @@ with tab1:
         # Remove old records for this date and append the new edited records
         other_dates_df = st.session_state.attendance_df[st.session_state.attendance_df['Date'].dt.date != entry_date]
         st.session_state.attendance_df = pd.concat([other_dates_df, edited_att], ignore_index=True)
+        # Save to permanent file
+        st.session_state.attendance_df.to_csv(ATTENDANCE_FILE, index=False)
         st.success(f"Attendance for {entry_date} saved successfully! KPIs have been updated.")
 
 # --- TAB 2: KPI OVERVIEW ---
@@ -147,23 +213,29 @@ with tab2:
         leave_statuses = ["AL", "UPL", "EL", "MC", "HL"]
         exempt_statuses = ["PH", "SD"]
         
-        total_headcount = len(filtered_df)
+        # HEADCOUNT FIX: Use actual unique employees instead of record count
+        actual_headcount = filtered_df['Emp_ID'].nunique()
+        total_shift_records = len(filtered_df)
+        
         present_count = len(filtered_df[filtered_df['Status'].isin(working_statuses)])
         absent_count = len(filtered_df[filtered_df['Status'].isin(leave_statuses + ["ABS"])])
+        exempt_count = len(filtered_df[filtered_df['Status'].isin(exempt_statuses)])
         
-        att_rate = (present_count / (total_headcount - len(filtered_df[filtered_df['Status'].isin(exempt_statuses)])) * 100) if (total_headcount - len(filtered_df[filtered_df['Status'].isin(exempt_statuses)])) > 0 else 0
+        scheduled_shifts = total_shift_records - exempt_count
+        
+        att_rate = (present_count / scheduled_shifts * 100) if scheduled_shifts > 0 else 0
         abs_rate = 100 - att_rate if att_rate > 0 else 0
         
         late_count = len(filtered_df[filtered_df['Late_Mins'] > 0])
         late_rate = (late_count / present_count * 100) if present_count > 0 else 0
         total_ot = filtered_df['OT_Hours'].sum()
         no_show_count = len(filtered_df[filtered_df['Status'] == 'ABS'])
-        leave_util = len(filtered_df[filtered_df['Status'].isin(leave_statuses)]) / total_headcount * 100 if total_headcount > 0 else 0
+        leave_util = len(filtered_df[filtered_df['Status'].isin(leave_statuses)]) / total_shift_records * 100 if total_shift_records > 0 else 0
 
         # Display Metrics in Columns
         col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Total Headcount (Scheduled)", f"{total_headcount}")
-        col2.metric("Present / Working", f"{present_count}")
+        col1.metric("Total Employees (Headcount)", f"{actual_headcount}", help="Actual number of unique employees in this filter.")
+        col2.metric("Total Shifts Worked", f"{present_count}", help="Total number of working shifts recorded in this time range.")
         col3.metric("Attendance Rate", f"{att_rate:.1f}%", delta=f"{att_rate - 95:.1f}% vs Target", delta_color="normal")
         col4.metric("Absenteeism Rate", f"{abs_rate:.1f}%")
 
@@ -264,24 +336,35 @@ with tab6:
     st.write("Log issues identified from the dashboard, assign owners, and track completion.")
     
     if 'action_log' not in st.session_state:
-        df_log = pd.DataFrame({
-            "Issue Identified": ["High 'ABS' in Night Shift C", "Line 1 Manpower Shortage"],
-            "Root Cause": ["Transport delay", "Flu outbreak"],
-            "Corrective Action": ["Coordinate with bus vendor", "Approve OT for Line 2 to cover"],
-            "Owner": ["Jane Smith", "John Doe"],
-            "Target Date": ["2026-06-30", "2026-06-26"],
-            "Status": ["Open", "In Progress"]
-        })
-        df_log['Target Date'] = pd.to_datetime(df_log['Target Date']).dt.date
-        st.session_state.action_log = df_log
+        if os.path.exists(CAPA_FILE):
+            df_log = pd.read_csv(CAPA_FILE)
+            df_log['Target Date'] = pd.to_datetime(df_log['Target Date']).dt.date
+            st.session_state.action_log = df_log
+        else:
+            df_log = pd.DataFrame({
+                "Issue Identified": ["High 'ABS' in Night Shift C", "Line 1 Manpower Shortage"],
+                "Root Cause": ["Transport delay", "Flu outbreak"],
+                "Corrective Action": ["Coordinate with bus vendor", "Approve OT for Line 2 to cover"],
+                "Owner": ["Jane Smith", "John Doe"],
+                "Target Date": ["2026-06-30", "2026-06-26"],
+                "Status": ["Open", "In Progress"]
+            })
+            df_log['Target Date'] = pd.to_datetime(df_log['Target Date']).dt.date
+            st.session_state.action_log = df_log
         
     edited_log = st.data_editor(
         st.session_state.action_log, 
         num_rows="dynamic", 
         use_container_width=True,
+        key="capa_editor",
         column_config={
             "Status": st.column_config.SelectboxColumn("Status", options=["Open", "In Progress", "Closed"]),
             "Target Date": st.column_config.DateColumn("Target Date")
         }
     )
-    st.session_state.action_log = edited_log
+    
+    # Save button for CAPA tracking
+    if st.button("💾 Save Action Log"):
+        st.session_state.action_log = edited_log
+        st.session_state.action_log.to_csv(CAPA_FILE, index=False)
+        st.success("Action tracking log saved perm
