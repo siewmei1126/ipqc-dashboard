@@ -736,5 +736,4 @@ with tab6:
 
         st.session_state.action_log.to_csv(CAPA_FILE, index=False)
 
-        st.success("Action tracking log saved permanently!") This is my dashboard for IPQC. i notice operator management and daily attendance entry is not tally whenever i update the operator management 
-
+        st.success("Action tracking log saved permanently!") 
